@@ -84,14 +84,16 @@ export function ConsolePane() {
           spellCheck={false}
         />
         <div className="flex items-center gap-2">
-          <select
+          <input
             value={dataset}
             onChange={(e) => set({ consoleDataset: e.target.value })}
-            className="flex-1 bg-ink-850 border border-ink-600 rounded px-2 py-1.5 text-[11px] text-slate-300 outline-none"
-          >
-            <option value="">nessun dataset (stato vuoto)</option>
-            <option value="datasets/sales.csv">datasets/sales.csv</option>
-          </select>
+            list="dataset-options"
+            placeholder="dataset: es. datasets/sales.csv (opzionale)"
+            className="flex-1 bg-ink-850 border border-ink-600 rounded px-2 py-1.5 text-[11px] text-slate-300 outline-none font-mono"
+          />
+          <datalist id="dataset-options">
+            <option value="datasets/sales.csv" />
+          </datalist>
           <label className="flex items-center gap-1.5 text-[10.5px] text-slate-400 cursor-pointer">
             <input
               type="checkbox"
