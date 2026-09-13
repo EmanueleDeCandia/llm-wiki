@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mplcache/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Ambienti e secret
+.env
+*.local
+
+# Vault di lavoro generati (il template resta in vault_template/)
+demo_vault/
+*.vault/
+
+# OS
+.DS_Store
+Thumbs.db

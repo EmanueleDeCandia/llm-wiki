@@ -30,6 +30,57 @@
 
 ---
 
+## 🏁 Stato di implementazione (questa versione)
+
+L'applicazione è **completamente funzionante senza modelli né agenti AI**:
+tutte le pipeline sono eseguite da un motore deterministico (parser,
+compilazione, lint, sandbox, retrieval). Il layer LLM (OpenAI / Anthropic /
+Ollama) è presente come **adattatore opzionale** e si attiva solo con
+configurazione esplicita — zero inferenze in assenza di `LLM_PROVIDER`.
+
+| Componente | Stato |
+| :--- | :--- |
+| Vault (topologia, immutabilità `sources/`, provenienza) | ✅ implementato + test |
+| Pipeline A — Ingestione (PDF/TXT/MD/DOCX, immagini, CSV/Parquet/SQLite) → note atomiche + `[[wikilink]]` + `INDEX.md` + `graph.json` | ✅ implementato + test |
+| Pipeline B — Knowledge Linting (orfani, isolati, cluster, conflitti, `lint_report.md`) | ✅ implementato + test |
+| Pipeline C — Sandbox Python (kernel isolato, 30 s, figure, note di sintesi) | ✅ implementato + test |
+| Frontend 3 colonne (tree, editor KaTeX+wikilink, grafo force-directed, console, lint, query) | ✅ React + TS + Tailwind |
+| API FastAPI (endpoint Skill §6) | ✅ implementato + test (34 test) |
+| LLM Abstraction Layer (client unificato + provider) | ✅ pronto, **disattivato by default** |
+| Shell Tauri desktop | 🔜 scaffold in `src/frontend/tauri/` (packaging successivo) |
+
+### Setup rapido
+
+```bash
+# 1) Backend (sidecar FastAPI, porta 8100)
+cd src/backend
+python3 -m venv ../../.venv
+../../.venv/bin/pip install -r requirements.txt
+../../.venv/bin/python run.py
+
+# 2) Frontend (Vite, porta 5173, proxy /api → 8100)
+cd src/frontend
+npm install
+npm run dev
+
+# 3) Apri http://localhost:5173 e usa "✨ Vault demo"
+#    oppure "python -m pytest" in src/backend per la suite di conformità
+```
+
+### Abilitare un modello AI (quando serve)
+
+```bash
+cd src/backend && cp .env.example .env
+# nel .env: LLM_PROVIDER=anthropic (+ ANTHROPIC_API_KEY)
+# oppure LLM_PROVIDER=ollama + un server Ollama locale (modello offline)
+```
+
+Nessuna modifica al codice: compilatore, agent e UI passano automaticamente
+dalla sintesi deterministica a quella LLM mantenendo invariati schema,
+provenienza e grafo.
+
+---
+
 ## 📖 Visione: LLM Wiki vs RAG Tradizionale
 
 I sistemi RAG (*Retrieval-Augmented Generation*) tradizionali soffrono di limiti strutturali insormontabili quando applicati a basi di conoscenza complesse:
