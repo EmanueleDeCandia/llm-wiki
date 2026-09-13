@@ -39,8 +39,11 @@ _PREREQ_CUES = ("richiede", "prerequisito", "presuppone", "assume", "basato su",
 
 
 def _sentences(text: str, max_sentences: int = 3) -> str:
-    # Rimuovi le righe di heading (non fanno parte della prosa)
-    prose_lines = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+    # Rimuovi heading e righe di tabella (non fanno parte della prosa)
+    prose_lines = [
+        ln for ln in text.splitlines()
+        if not ln.lstrip().startswith("#") and not ln.lstrip().startswith("|")
+    ]
     clean = re.sub(r"[#*`>|]", " ", "\n".join(prose_lines))
     clean = WIKILINK_RE.sub(lambda m: m.group(2) or m.group(1), clean)
     clean = re.sub(r"\s+", " ", clean).strip()
@@ -113,13 +116,20 @@ class DeterministicCompiler:
 
         # 1) Note-entità per il documento sorgente (provenienza e mappa H1-H6)
         toc = "\n".join(f"{i+1}. {h}" for i, h in enumerate(parsed.headings)) or "- (nessun heading esplicito)"
+        tables_block = ""
+        if parsed.tables:
+            from ..parsers.tables import table_to_markdown
+
+            tbls = "\n\n".join(table_to_markdown(t) for t in parsed.tables)
+            tables_block = f"**Tabelle estratte ({len(parsed.tables)})**\n\n{tbls}\n\n"
         doc_body = (
             f"# {doc_title}\n\n"
             f"## Sintesi Esecutiva\n\n{_sentences(parsed.markdown)}\n\n"
             f"## Formalizzazione & Dettagli\n\n"
             f"Documento sorgente `{parsed.source_path}` "
             f"({_words(parsed.markdown)} parole, {len(parsed.headings)} heading) estratto dal parser "
-            f"``{parsed.parser_name}``.\n\n**Gerarchia dei titoli**\n\n{toc}\n\n"
+            f"`{parsed.parser_name}`.\n\n**Gerarchia dei titoli**\n\n{toc}\n\n"
+            f"{tables_block}"
             f"I contenuti atomici derivati da questo documento sono documentati nelle note "
             f"concettuali collegate in § Relazioni nel Grafo.\n\n"
         )

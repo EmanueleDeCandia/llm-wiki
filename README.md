@@ -42,6 +42,7 @@ configurazione esplicita — zero inferenze in assenza di `LLM_PROVIDER`.
 | :--- | :--- |
 | Vault (topologia, immutabilità `sources/`, provenienza) | ✅ implementato + test |
 | Pipeline A — Ingestione (PDF/TXT/MD/DOCX, immagini, CSV/Parquet/SQLite) → note atomiche + `[[wikilink]]` + `INDEX.md` + `graph.json` | ✅ implementato + test |
+| PDF engine — `auto`: `docling` (tabelle strutturate + formule LaTeX, se installato) → fallback built-in **pypdf+tables** (rilevatore tabelle by layout, zero AI) | ✅ implementato + test |
 | Pipeline B — Knowledge Linting (orfani, isolati, cluster, conflitti, `lint_report.md`) | ✅ implementato + test |
 | Pipeline C — Sandbox Python (kernel isolato, 30 s, figure, note di sintesi) | ✅ implementato + test |
 | Frontend 3 colonne (tree, editor KaTeX+wikilink, grafo force-directed, console, lint, query) | ✅ React + TS + Tailwind |

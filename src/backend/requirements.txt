@@ -16,8 +16,9 @@ polars>=1.0
 pytest>=8.0
 
 # --- Opzionali (attivi solo se installati, mai richiesti a runtime) ---------
-# docling>=2.0            # parsing PDF ad alta fedeltà (LLW_PDF_ENGINE=docling)
-# marker-pdf>=1.0         # alternativa a docling
+# docling>=2.10           # PDF ad alta fedeltà: tabelle strutturate, gerarchia,
+#                         # formule (LLW_PDF_ENGINE=auto|docling, LLW_PDF_FORMULAS=1)
+# marker-pdf>=1.0         # alternativa a docling (LLW_PDF_ENGINE=marker)
 # python-docx>=1.1        # DOCX avanzato (built-in usa OOXML diretto)
 # jupyter-client>=8.0     # kernel Jupyter persistente (LLW_KERNEL=jupyter)
 # matplotlib / seaborn    # installati NEL VENV DEL SANDBOX per gli script generati

@@ -95,6 +95,49 @@ def build_simple_pdf(lines: list[str], path: Path) -> None:
     path.write_bytes(out.getvalue())
 
 
+def build_table_pdf(text_lines: list[str], table_rows: list[list[str]], path: Path) -> None:
+    """PDF con testo libero + tabella a colonne allineate (per il table detector)."""
+    ops = []
+    y = 740
+    for t in text_lines:
+        ops.append(f"BT /F1 11 Tf 56 {y} Td ({t}) Tj ET")
+        y -= 18
+    y -= 8
+    for row in table_rows:
+        x = 56
+        for cell in row:
+            esc = cell.replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")
+            ops.append(f"BT /F1 10 Tf {x} {y} Td ({esc}) Tj ET")
+            x += 130
+        y -= 16
+    stream = "\n".join(ops).encode("latin-1", "replace")
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = io.BytesIO()
+    out.write(b"%PDF-1.4\n")
+    offsets = []
+    for i, obj in enumerate(objs, start=1):
+        offsets.append(out.tell())
+        out.write(f"{i} 0 obj\n".encode())
+        out.write(obj)
+        out.write(b"\nendobj\n")
+    xref_pos = out.tell()
+    out.write(f"xref\n0 {len(objs) + 1}\n".encode())
+    out.write(b"0000000000 65535 f \n")
+    for off in offsets:
+        out.write(f"{off:010d} 00000 n \n".encode())
+    out.write(b"trailer\n")
+    out.write(f"<< /Size {len(objs) + 1} /Root 1 0 R >>\n".encode())
+    out.write(f"startxref\n{xref_pos}\n%%EOF\n".encode())
+    path.write_bytes(out.getvalue())
+
+
 def build_simple_docx(path: Path) -> None:
     """DOCX minimale (OOXML) con heading e paragrafi."""
     xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

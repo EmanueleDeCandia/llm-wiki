@@ -4,8 +4,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.parsers.registry import ParserRegistry
+from app.parsers.tables import table_to_markdown
 
-from .conftest import SAMPLE_PAPER, build_simple_docx, build_simple_pdf
+from .conftest import SAMPLE_PAPER, build_simple_docx, build_simple_pdf, build_table_pdf
 
 
 def test_text_parser(tmp_path: Path) -> None:
@@ -30,6 +31,70 @@ def test_pdf_parser(tmp_path: Path) -> None:
     assert "Transformer Model" in parsed.markdown
     assert "Attention is all you need" in parsed.markdown
     assert parsed.parser_name.startswith("pdf:")
+
+
+def test_pdf_table_extraction_built_in(tmp_path: Path) -> None:
+    """Il built-in pypdf+tables deve trasformare le regioni allineate in tabelle
+    Markdown (e preservare il testo libero circostante)."""
+    p = tmp_path / "report.pdf"
+    build_table_pdf(
+        ["Quarterly report for the fiscal year.", "The figures below are unaudited."],
+        [
+            ["Month", "Units", "Revenue"],
+            ["Jan", "120", "1450.50"],
+            ["Feb", "95", "1180.25"],
+            ["Mar", "210", "2675.00"],
+        ],
+        p,
+    )
+    reg = ParserRegistry()
+    # vincolato al built-in per il test (indipendente da docling/eventuali installazioni)
+    reg.pdf.engine = "pypdf"
+    parsed = reg.parse_document(p, "sources/papers/report.pdf")
+
+    assert "| Month | Units | Revenue |" in parsed.markdown
+    assert "| Jan | 120 | 1450.50 |" in parsed.markdown
+    assert "| Mar | 210 | 2675.00 |" in parsed.markdown
+    # testo libero preservato nel flusso
+    assert "Quarterly report for the fiscal year." in parsed.markdown
+    # ParsedTable strutturato
+    assert len(parsed.tables) == 1
+    t = parsed.tables[0]
+    assert t.header == ["Month", "Units", "Revenue"]
+    assert len(t.rows) == 3
+    assert t.rows[0] == ["Jan", "120", "1450.50"]
+    # allineamento numerico delle colonne
+    assert "---:" in table_to_markdown(t)
+    # il parser dichiara il proprio motore
+    assert parsed.parser_name == "pdf:pypdf+tables"
+
+
+def test_pdf_table_ingested_into_note(tmp_path: Path, vault_root: Path) -> None:
+    """E2E: PDF con tabella → nota-entità che contiene la tabella Markdown."""
+    from app.core.vault import Vault
+    from app.index.index_builder import write_indexes
+    from app.pipeline import ingest_file
+    from app.schemas.wiki import parse_frontmatter
+
+    vault = Vault(root=vault_root, template_root=vault_root)
+    vault.ensure_topology()
+    write_indexes(vault)
+    vault.snapshot_sources()
+
+    p = vault.root / "sources" / "papers" / "report.pdf"
+    build_table_pdf(
+        ["Sales overview."],
+        [["Month", "Units", "Revenue"], ["Jan", "120", "1450.50"], ["Feb", "95", "1180.25"]],
+        p,
+    )
+    res = ingest_file(vault, p, "papers")
+    assert res.sources_integrity_ok
+    doc_note = [n for n in res.notes_created if n.startswith("wiki/entities/")][0]
+    content = (vault.root / doc_note).read_text(encoding="utf-8")
+    note, body = parse_frontmatter(content)
+    assert note.type == "entity"
+    assert "| Month | Units | Revenue |" in body
+    assert "| Jan | 120 | 1450.50 |" in body
 
 
 def test_docx_parser(tmp_path: Path) -> None:

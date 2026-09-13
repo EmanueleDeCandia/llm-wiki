@@ -27,7 +27,7 @@ cd src/backend && ../../.venv/bin/python -m pytest
 | :--- | :--- |
 | `app/core/vault.py` | Topologia del vault, apertura, **immutabilità `sources/`** (hash SHA-256) — §1-2 |
 | `app/schemas/wiki.py` | `WikiSchema`: frontmatter YAML + blocchi rigidi del corpo — §3 |
-| `app/parsers/` | Parser multimodali (PDF pypdf/docling hook, TXT/MD, DOCX OOXML, PNG Pillow, CSV/Parquet/SQLite polars) — §4-A |
+| `app/parsers/` | Parser multimodali (PDF engine `auto` = docling → pypdf+tables, TXT/MD, DOCX OOXML, PNG Pillow, CSV/Parquet/SQLite polars) — §4-A |
 | `app/compiler/` | Compilazione note atomiche: `DeterministicCompiler` (by-default, **senza AI**) e `LLMCompiler` (stesso contratto, prompt in `prompts.py`) — §4-A.4 |
 | `app/index/` | Generatore `_index/INDEX.md` + `_index/graph.json` — §4-A.4 |
 | `app/lint/` | Pipeline B: grafo G=(V,E), link orfani, nodi isolati, cluster, conflitti, `lint_report.md` — §4-B |
@@ -35,6 +35,28 @@ cd src/backend && ../../.venv/bin/python -m pytest
 | `app/llm/` | **LLM Abstraction Layer**: `LLMClient` + adattatori OpenAI/Anthropic/Ollama + client offline. `LLM_PROVIDER=none` (default): nessun modello invocato — §5.2 |
 | `app/agent/` | Interrogazione note: retrieval deterministico (by-default) o sintesi LLM — §6 |
 | `app/api/routes.py` | Endpoint §6: `vault/open`, `ingest/file`, `graph/nodes`, `lint/run`, `sandbox/run`, `agent/query` + supporto UI |
+
+## Parser PDF: selezione del motore
+
+`LLW_PDF_ENGINE` (default `auto`):
+
+| Valore | Comportamento |
+| :--- | :--- |
+| `auto` | Prova `docling` (alta fedeltà: tabelle strutturate, gerarchia H1-H6, formule; con `LLW_PDF_FORMULAS=1` anche enrichment formule in LaTeX); se docling non è installato o non è raggiungibile, degrada al motore built-in senza errori |
+| `pypdf` | Motore built-in: testo dal layer testuale + **rilevatore di tabelle based on layout** (clustering righe/colonne su coordinate, zero AI) → tabelle Markdown con allineamento numerico |
+| `docling` / `marker` | Vincolati all'engine indicato (fallback built-in solo in caso di errore) |
+
+Su una macchina con internet, abilitare docling richiede solo:
+
+```bash
+pip install docling          # attiva automaticamente la modalità auto
+# opzionale: formule in LaTeX vero
+# LLW_PDF_FORMULAS=1
+```
+
+Le tabelle estratte vengono inserite nella nota-entità del documento
+(blocco `Tabelle estratte`) e rese disponibili in `ParsedDocument.tables`
+per pipeline future.
 
 ## Integrazione modelli AI (quando serve)
 
