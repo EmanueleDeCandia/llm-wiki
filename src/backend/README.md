@@ -42,21 +42,24 @@ cd src/backend && ../../.venv/bin/python -m pytest
 
 | Valore | Comportamento |
 | :--- | :--- |
-| `auto` | Prova `docling` (alta fedeltà: tabelle strutturate, gerarchia H1-H6, formule; con `LLW_PDF_FORMULAS=1` anche enrichment formule in LaTeX); se docling non è installato o non è raggiungibile, degrada al motore built-in senza errori |
-| `pypdf` | Motore built-in: testo dal layer testuale + **rilevatore di tabelle based on layout** (clustering righe/colonne su coordinate, zero AI) → tabelle Markdown con allineamento numerico |
+| `auto` | Catena: `docling` (se installato) → `llamaparse` cloud (se `LLAMAPARSE_API_KEY` è configurata) → built-in. Ogni passaggio è loggato; nessun errore a metà pipeline |
+| `pypdf` | Motore built-in, zero AI: testo dal layer testuale + **due livelli di table detection** — PyMuPDF `find_tables` (PDF con linee di separazione, incluso booktabs) ed euristica su coordinate per tabelle allineate senza linee → tabelle Markdown con allineamento numerico |
 | `docling` / `marker` | Vincolati all'engine indicato (fallback built-in solo in caso di errore) |
+| `llamaparse` | API cloud LlamaIndex: Markdown con tabelle e formule LaTeX. **Il PDF lascia la macchina** — solo documenti non sensibili. Richiede `LLAMAPARSE_API_KEY` |
 
-Su una macchina con internet, abilitare docling richiede solo:
+Per attivare docling su una macchina con internet:
 
 ```bash
-pip install docling          # attiva automaticamente la modalità auto
+pip install docling          # la modalità auto lo usa automaticamente
 # opzionale: formule in LaTeX vero
 # LLW_PDF_FORMULAS=1
 ```
 
 Le tabelle estratte vengono inserite nella nota-entità del documento
 (blocco `Tabelle estratte`) e rese disponibili in `ParsedDocument.tables`
-per pipeline future.
+per pipeline future. Il frontmatter/note restano sempre generate dal
+compiler deterministico: gli engine (anche cloud) fanno solo la
+conversione PDF → Markdown.
 
 ## Integrazione modelli AI (quando serve)
 

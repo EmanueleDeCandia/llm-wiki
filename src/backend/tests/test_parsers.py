@@ -69,6 +69,117 @@ def test_pdf_table_extraction_built_in(tmp_path: Path) -> None:
     assert parsed.parser_name == "pdf:pypdf+tables"
 
 
+def test_pdf_table_extraction_pymupdf_ruled(tmp_path: Path) -> None:
+    """PDF con griglia di linee: la table detection di PyMuPDF deve
+    ricostruire la tabella e gli span interni non devono duplicarsi nel testo."""
+    p = tmp_path / "ruled.pdf"
+    build_table_pdf(
+        ["Ruled quarterly report."],
+        [
+            ["Month", "Units", "Revenue"],
+            ["Jan", "120", "1450.50"],
+            ["Feb", "95", "1180.25"],
+        ],
+        p,
+        ruled=True,
+    )
+    reg = ParserRegistry()
+    reg.pdf.engine = "pypdf"
+    parsed = reg.parse_document(p, "sources/papers/ruled.pdf")
+    # testo libero presente una sola volta
+    assert parsed.markdown.count("Ruled quarterly report.") == 1
+    # tabella Markdown presente
+    assert "Month" in parsed.markdown and "1450.50" in parsed.markdown
+    assert len(parsed.tables) == 1
+    t = parsed.tables[0]
+    assert t.header == ["Month", "Units", "Revenue"]
+    assert t.rows[0] == ["Jan", "120", "1450.50"]
+    assert parsed.parser_name.startswith("pdf:")
+
+
+def test_llamaparse_adapter_mocked(monkeypatch, tmp_path) -> None:
+    """Adapter LlamaParse: convert → poll → ParsedDocument con tabelle
+    estratte dal Markdown restituito (HTTP mockato, nessuna rete)."""
+    from app.parsers.llama_parse import LlamaParseClient
+
+    fake_md = (
+        "# Cloud Report\n\n"
+        "Intro text extracted from the document.\n\n"
+        "| A | B |\n"
+        "| :--- | ---: |\n"
+        "| x | 1 |\n"
+        "| y | 2 |\n"
+    )
+    calls: list[tuple] = []
+
+    def fake_post(self, path: str, body: dict) -> dict:  # noqa: ANN001
+        calls.append(("post", path, body["source_type"], body["options"]["chunking"]))
+        return {"id": "res-1"}
+
+    def fake_get(self, url: str) -> dict:  # noqa: ANN001
+        calls.append(("get", url))
+        return {"status": "SUCCEEDED", "parsed_document": {"markdown": fake_md}}
+
+    monkeypatch.setattr(LlamaParseClient, "_post_json", fake_post)
+    monkeypatch.setattr(LlamaParseClient, "_get_json", fake_get)
+    client = LlamaParseClient(api_key="sk-test")
+    doc = client.parse_pdf(b"%PDF-fake", "report.pdf", "sources/papers/report.pdf")
+    assert doc.parser_name == "pdf:llamaparse"
+    assert doc.title == "Cloud Report"
+    assert doc.source_path == "sources/papers/report.pdf"
+    assert "Cloud Report" in doc.headings
+    assert len(doc.tables) == 1
+    assert doc.tables[0].header == ["A", "B"]
+    assert doc.tables[0].rows == [["x", "1"], ["y", "2"]]
+    assert calls[0] == ("post", "/convert", "data", "none")
+    assert any(c[0] == "get" and c[1].endswith("/res-1") for c in calls)
+
+
+def test_engine_auto_uses_llamaparse_when_key(monkeypatch, tmp_path: Path) -> None:
+    """In modalità auto, senza docling ma con chiave LlamaParse, l'engine
+    cloud deve essere scelto prima del built-in."""
+    from app.parsers import pdf_doc as pdfmod
+    from app.parsers.llama_parse import LlamaParseClient
+    from app.schemas.wiki import ParsedDocument
+
+    p = tmp_path / "r.pdf"
+    build_simple_pdf(["Some text."], p)
+
+    monkeypatch.delenv("LLW_PDF_ENGINE", raising=False)
+    monkeypatch.setenv("LLAMAPARSE_API_KEY", "sk-test")
+    # docling non disponibile (independente dall'ambiente di test)
+    monkeypatch.setattr(pdfmod.PdfParser, "_parse_high_fidelity",
+                        lambda self, *a, **k: (_ for _ in ()).throw(ImportError("docling assente")))
+    sentinel = ParsedDocument(
+        source_path="sources/papers/r.pdf",
+        title="Cloud",
+        markdown="cloud md",
+        headings=["Cloud"],
+        tables=[],
+        word_count=1,
+        parser_name="pdf:llamaparse",
+    )
+    monkeypatch.setattr(LlamaParseClient, "parse_pdf",
+                        lambda self, data, name, rel: sentinel)  # noqa: B023
+    out = pdfmod.PdfParser(engine=None).parse(p, "sources/papers/r.pdf")
+    assert out.parser_name == "pdf:llamaparse"
+
+
+def test_engine_llamaparse_requires_key(monkeypatch, tmp_path: Path) -> None:
+    """Engine esplicito `llamaparse` senza chiave → errore esplicito
+    (mai un fallback silenzioso che confonda l'utente)."""
+    import pytest
+
+    from app.parsers import pdf_doc as pdfmod
+    from app.parsers.llama_parse import LlamaParseError
+
+    p = tmp_path / "r.pdf"
+    build_simple_pdf(["Some text."], p)
+    monkeypatch.delenv("LLAMAPARSE_API_KEY", raising=False)
+    with pytest.raises(LlamaParseError):
+        pdfmod.PdfParser(engine="llamaparse").parse(p, "sources/papers/r.pdf")
+
+
 def test_pdf_table_ingested_into_note(tmp_path: Path, vault_root: Path) -> None:
     """E2E: PDF con tabella → nota-entità che contiene la tabella Markdown."""
     from app.core.vault import Vault

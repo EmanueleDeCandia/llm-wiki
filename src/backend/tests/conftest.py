@@ -95,21 +95,47 @@ def build_simple_pdf(lines: list[str], path: Path) -> None:
     path.write_bytes(out.getvalue())
 
 
-def build_table_pdf(text_lines: list[str], table_rows: list[list[str]], path: Path) -> None:
-    """PDF con testo libero + tabella a colonne allineate (per il table detector)."""
+def build_table_pdf(text_lines: list[str], table_rows: list[list[str]], path: Path, ruled: bool = False) -> None:
+    """PDF con testo libero + tabella a colonne allineate (per il table detector).
+
+    Con `ruled=True` la tabella è circondata da una griglia di linee (per
+    testare la detection PyMuPDF `find_tables(strategy='lines')`).
+    """
+    esc = lambda s: s.replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")  # noqa: E731
     ops = []
     y = 740
     for t in text_lines:
-        ops.append(f"BT /F1 11 Tf 56 {y} Td ({t}) Tj ET")
+        ops.append(f"BT /F1 11 Tf 56 {y} Td ({esc(t)}) Tj ET")
         y -= 18
     y -= 8
-    for row in table_rows:
-        x = 56
-        for cell in row:
-            esc = cell.replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")
-            ops.append(f"BT /F1 10 Tf {x} {y} Td ({esc}) Tj ET")
-            x += 130
-        y -= 16
+    if ruled:
+        x0 = 56
+        cell_w = 105
+        n = len(table_rows)
+        n_cols = len(table_rows[0])
+        top = y + 12
+        bottom = y - 16 * (n - 1) - 8
+        ops.append("q 0.6 w")
+        for k in range(n + 1):
+            ly = top - 16 * k
+            ops.append(f"{x0} {ly} m {x0 + cell_w * n_cols} {ly} l S")
+        for k in range(n + 1):
+            lx = x0 + cell_w * k
+            ops.append(f"{lx} {top} m {lx} {bottom} l S")
+        ops.append("Q")
+        for row in table_rows:
+            x = x0 + 6
+            for cell in row:
+                ops.append(f"BT /F1 10 Tf {x} {y} Td ({esc(cell)}) Tj ET")
+                x += cell_w
+            y -= 16
+    else:
+        for row in table_rows:
+            x = 56
+            for cell in row:
+                ops.append(f"BT /F1 10 Tf {x} {y} Td ({esc(cell)}) Tj ET")
+                x += 130
+            y -= 16
     stream = "\n".join(ops).encode("latin-1", "replace")
     objs = [
         b"<< /Type /Catalog /Pages 2 0 R >>",

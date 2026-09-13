@@ -165,3 +165,27 @@ def parse_markdown_table(md: str) -> ParsedTable | None:
             continue  # riga di separazione
         body.append(row)
     return ParsedTable(header=header, rows=body)
+
+
+def extract_markdown_tables(markdown: str) -> list[ParsedTable]:
+    """Trova tutte le tabelle Markdown (blocchi di righe `|...|`) in un
+    documento — utile per gli engine cloud (es. LlamaParse) che restituiscono
+    Markdown con tabelle già formattate."""
+    tables: list[ParsedTable] = []
+    block: list[str] = []
+
+    def flush() -> None:
+        nonlocal block
+        if len(block) >= 2:
+            t = parse_markdown_table("\n".join(block))
+            if t is not None and (t.rows or len(t.header) >= 2):
+                tables.append(t)
+        block = []
+
+    for ln in markdown.splitlines():
+        if ln.strip().startswith("|"):
+            block.append(ln)
+        else:
+            flush()
+    flush()
+    return tables
