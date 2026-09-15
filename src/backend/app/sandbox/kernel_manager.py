@@ -158,7 +158,15 @@ class KernelManager:
             script_path=script_rel,
             exit_code=exit_code,
             stdout=stdout,
-            stderr=stderr,
+            stderr=stderr
+            + (
+                "\n[suggerimento] 'df' non esiste: è definito solo se selezioni un dataset nel campo "
+                "'dataset' (es. datasets/sales.csv) prima di eseguire."
+                if exit_code
+                and not dataset_rel
+                and "name 'df' is not defined" in stderr
+                else ""
+            ),
             duration_ms=duration_ms,
             figures=self._collect_figures(manifest, out_dir),
         )

@@ -112,7 +112,13 @@ export function ConsolePane() {
           </button>
         </div>
         <button
-          onClick={() => set({ consoleCode: SAMPLE_CODE })}
+          onClick={() => {
+            set({ consoleCode: SAMPLE_CODE, consoleDataset: 'datasets/sales.csv' });
+            useStore.getState().pushConsole({
+              kind: 'info',
+              text: 'esempio inserito (dataset: datasets/sales.csv) — il campo dataset è stato completato',
+            });
+          }}
           className="text-[10px] text-sky-400 hover:text-sky-300"
         >
           usa esempio correlazione+grafico
