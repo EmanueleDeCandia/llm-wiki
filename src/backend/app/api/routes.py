@@ -406,6 +406,66 @@ def delete_note(relpath: str) -> dict:
     return {"path": relpath, "deleted": True}
 
 
+_DELETABLE_PREFIXES = ("wiki/", "scripts/generated/", "sources/images/generated/")
+
+
+@router.delete("/files/{relpath:path}")
+def delete_file(relpath: str) -> dict:
+    """Elimina file rigenerabili: note wiki, script generati, figure generate.
+
+    Le sorgenti in `sources/` (fuori dai sottodirectory generati dall'app)
+    NON sono mai eliminabili: immutabilità della provenienza (Skill §2).
+    """
+    vault = _vault()
+    cleaned = relpath.replace("\\", "/").lstrip("/")
+    if not cleaned.startswith(_DELETABLE_PREFIXES):
+        raise HTTPException(
+            status_code=400,
+            detail="Eliminabili solo: note wiki/, script generati (scripts/generated/), "
+            "figure generate (sources/images/generated/). Le sorgenti sono immutabili.",
+        )
+    p = _resolve_vault_path(cleaned)
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="File non trovato")
+    p.unlink()
+    write_indexes(vault)
+    return {"path": cleaned, "deleted": True}
+
+
+class CleanupRequest(BaseModel):
+    include_synthesis: bool = True  # rimuovi anche le note di sintesi create dalla sandbox
+
+
+@router.post("/sandbox/cleanup")
+def sandbox_cleanup(req: CleanupRequest | None = None) -> dict:
+    """Rimuove gli artefatti generati dalla sandbox: script `scripts/generated/*.py`,
+    figure `sources/images/generated/*` e (di default) le note di sintesi sandbox
+    che li citano. Ricostruisce indice e grafo."""
+    vault = _vault()
+    deleted: list[str] = []
+    for p in sorted(vault.generated_scripts.rglob("*.py")):
+        if p.is_file():
+            p.unlink()
+            deleted.append(vault.rel(p))
+    for p in sorted(vault.generated_images.iterdir()):
+        if p.is_file() and not p.name.startswith("."):
+            p.unlink()
+            deleted.append(vault.rel(p))
+    if req is None or req.include_synthesis:
+        synth_dir = vault.wiki / "synthesis"
+        if synth_dir.exists():
+            for p in sorted(synth_dir.glob("*.md")):
+                try:
+                    content = p.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                if "scripts/generated/" in content or "Esecuzione sandbox" in content:
+                    p.unlink()
+                    deleted.append(vault.rel(p))
+    graph = write_indexes(vault)
+    return {"deleted": deleted, "count": len(deleted), "graph_nodes": graph["node_count"]}
+
+
 @router.get("/index")
 def index_md() -> dict:
     vault = _vault()

@@ -46,6 +46,12 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
   deleteNote: (path: string) => req<{ deleted: boolean }>(`/notes/${path}`, { method: 'DELETE' }),
+  deleteFile: (path: string) => req<{ path: string; deleted: boolean }>(`/files/${path}`, { method: 'DELETE' }),
+  sandboxCleanup: (includeSynthesis = true) =>
+    req<{ deleted: string[]; count: number; graph_nodes: number }>('/sandbox/cleanup', {
+      method: 'POST',
+      body: JSON.stringify({ include_synthesis: includeSynthesis }),
+    }),
   graph: () => req<GraphData>('/graph/nodes'),
   ingest: (file: File, branch?: string) =>
     new Promise<IngestResult>((resolve, reject) => {

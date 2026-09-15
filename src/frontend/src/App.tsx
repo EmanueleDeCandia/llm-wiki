@@ -28,6 +28,12 @@ export default function App() {
     }
   }, [set]);
 
+  // espone il refresh agli altri pannelli (es. cleanup sandbox nel pannello console)
+  useEffect(() => {
+    set({ refresh: refreshData });
+    return () => set({ refresh: null });
+  }, [refreshData, set]);
+
   // health + stato sidecar
   useEffect(() => {
     const poll = async () => {

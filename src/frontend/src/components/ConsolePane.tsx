@@ -1,6 +1,36 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useStore } from '../store';
+
+function CleanupButton() {
+  const [busy, setBusy] = useState(false);
+  const cleanup = async () => {
+    if (!window.confirm('Elimina gli artefatti delle analisi generate (script, figure e note di sintesi correlate)?')) return;
+    setBusy(true);
+    useStore.getState().pushConsole({ kind: 'info', text: '🧹 pulizia artefatti sandbox…' });
+    try {
+      const res = await api.sandboxCleanup(true);
+      useStore
+        .getState()
+        .pushConsole({ kind: 'info', text: `✔ eliminati ${res.count} file · grafo ora con ${res.graph_nodes} nodi` });
+      useStore.getState().refresh?.();
+    } catch (e) {
+      useStore.getState().pushConsole({ kind: 'stderr', text: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      onClick={cleanup}
+      disabled={busy}
+      title="Elimina script generati, figure e note di sintesi create dalla sandbox"
+      className="text-[10px] text-rose-400/90 hover:text-rose-300 disabled:opacity-40"
+    >
+      {busy ? '🧹 pulizia in corso…' : '🧹 pulisci analisi generate'}
+    </button>
+  );
+}
 
 const SAMPLE_CODE = `# Correlazione + scatter (matplotlib)
 import polars as pl
@@ -111,18 +141,21 @@ export function ConsolePane() {
             {running ? '⏳' : '▶ Esegui'}
           </button>
         </div>
-        <button
-          onClick={() => {
-            set({ consoleCode: SAMPLE_CODE, consoleDataset: 'datasets/sales.csv' });
-            useStore.getState().pushConsole({
-              kind: 'info',
-              text: 'esempio inserito (dataset: datasets/sales.csv) — il campo dataset è stato completato',
-            });
-          }}
-          className="text-[10px] text-sky-400 hover:text-sky-300"
-        >
-          usa esempio correlazione+grafico
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              set({ consoleCode: SAMPLE_CODE, consoleDataset: 'datasets/sales.csv' });
+              useStore.getState().pushConsole({
+                kind: 'info',
+                text: 'esempio inserito (dataset: datasets/sales.csv) — il campo dataset è stato completato',
+              });
+            }}
+            className="text-[10px] text-sky-400 hover:text-sky-300"
+          >
+            usa esempio correlazione+grafico
+          </button>
+          <CleanupButton />
+        </div>
       </div>
 
       {/* log */}

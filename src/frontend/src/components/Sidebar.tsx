@@ -43,6 +43,19 @@ export function Sidebar({
     onNavigate(n.id, n.title);
   };
 
+  const handleDeleteFile = async (path: string) => {
+    if (!window.confirm(`Eliminare il file:\n${path}\n?\n\nLe sorgenti in sources/ (fuori da generated) non sono eliminabili.`)) {
+      return;
+    }
+    try {
+      await api.deleteFile(path);
+      useStore.getState().set({ statusMessage: `Eliminato: ${path}` });
+      await onRefresh();
+    } catch (e) {
+      useStore.getState().set({ statusMessage: `Eliminazione fallita: ${String(e)}` });
+    }
+  };
+
   return (
     <aside className="w-72 shrink-0 flex flex-col border-r border-ink-700 bg-ink-900">
       <div className="flex items-center gap-1 p-2 border-b border-ink-700">
@@ -88,7 +101,11 @@ export function Sidebar({
             </div>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <FileTree root={tree} onOpenFile={(p) => onNavigate(p, '')} />
+            <FileTree
+            root={tree}
+            onOpenFile={(p) => onNavigate(p, '')}
+            onDeleteFile={(p) => void handleDeleteFile(p)}
+          />
           </div>
         </>
       )}

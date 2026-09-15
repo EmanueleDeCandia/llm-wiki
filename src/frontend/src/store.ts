@@ -65,6 +65,9 @@ interface State {
   statusMessage: string | null;
   toast: string | null;
 
+  // callback di refresh dei dati (albero, note, grafo) — impostato da App
+  refresh: (() => void) | null;
+
   set: (partial: Partial<State>) => void;
   pushConsole: (e: Omit<ConsoleEntry, 'at'>) => void;
   openNote: (path: string, content: string) => void;
@@ -107,6 +110,8 @@ export const useStore = create<State>((set, get) => ({
 
   statusMessage: null,
   toast: null,
+
+  refresh: null,
 
   set: (partial) => set(partial),
 

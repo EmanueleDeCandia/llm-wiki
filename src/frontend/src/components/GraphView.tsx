@@ -1,5 +1,5 @@
 import ForceGraph2D from 'react-force-graph-2d';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import type { GraphData, GraphNode } from '../types';
 
@@ -31,6 +31,21 @@ export function GraphView({
   const tagFilter = useStore((s) => s.graphTagFilter);
   const search = useStore((s) => s.graphSearch);
   const gRef = useRef<unknown>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  // Le dimensioni del canvas DEVONO essere numeri (pixel): "100%" produce
+  // un canvas alto 0 → grafo invisibile. Misuriamo il container davvero.
+  const [size, setSize] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0].contentRect;
+      if (r.width > 0 && r.height > 0) setSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const { nodes, links, allTags } = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -62,13 +77,14 @@ export function GraphView({
   }, [graph, tagFilter, search]);
 
   useEffect(() => {
-    // centraggio alla prima resa
+    // centraggio alla prima resa / a cambi di dimensioni del pannello
+    if (size.w === 0 || size.h === 0) return;
     const t = setTimeout(() => {
       const api = gRef.current as { zoomToFit?: (ms?: number, fit?: number) => void } | null;
       api?.zoomToFit?.(300, 0.5);
     }, 350);
     return () => clearTimeout(t);
-  }, [graph]);
+  }, [graph, size.w, size.h]);
 
   if (graph.node_count === 0) {
     return (
@@ -79,7 +95,8 @@ export function GraphView({
   }
 
   return (
-    <div className="relative" style={{ height }}>
+    <div ref={wrapRef} className="relative w-full" style={{ height }}>
+      {size.w > 0 && size.h > 0 && (
       <ForceGraph2D
         ref={gRef as never}
         graphData={{ nodes, links }}
@@ -112,9 +129,10 @@ export function GraphView({
           n.fx = null;
           n.fy = null;
         }}
-        width={undefined}
-        height={height as number}
+        width={size.w}
+        height={size.h}
       />
+      )}
       {/* legenda + filtri */}
       <div className="absolute top-2 left-2 bg-ink-900/90 border border-ink-700 rounded-lg p-2 space-y-2 w-44">
         <input

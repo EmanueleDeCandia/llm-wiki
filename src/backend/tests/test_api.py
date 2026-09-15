@@ -206,6 +206,58 @@ def test_notes_save_and_validate(client: TestClient, vault_root: Path) -> None:
     assert r.status_code == 400
 
 
+def test_sandbox_cleanup_and_delete_file(client: TestClient, vault_root: Path) -> None:
+    """I nuovi endpoint di gestione: cleanup artefatti sandbox + delete file
+    rigenerabili. Le sorgenti (non generate) devono restare intatte."""
+    _open(client, vault_root)
+    scripts = vault_root / "scripts" / "generated"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "task_test.py").write_text("print(1)\n", encoding="utf-8")
+    images = vault_root / "sources" / "images" / "generated"
+    images.mkdir(parents=True, exist_ok=True)
+    (images / "plot_1.png").write_bytes(b"\x89PNG-fake-bytes")
+    synth = vault_root / "wiki" / "synthesis"
+    synth.mkdir(parents=True, exist_ok=True)
+    (synth / "analisi-test.md").write_text(
+        "---\ntitle: 'Analisi: test'\ntype: synthesis\ncreated: '2026-01-01'\n"
+        "updated: '2026-01-01'\nsources:\n- '[[scripts/generated/task_test.py]]'\n"
+        "aliases: []\ntags: []\nrelations:\n  prerequisites: []\n  related: []\n  conflicts_with: []\n---\n"
+        "# Analisi: test\n\n## Sintesi Esecutiva\n\n"
+        "Esecuzione sandbox `scripts/generated/task_test.py` completata in 1 ms (exit 0).\n",
+        encoding="utf-8",
+    )
+    src = vault_root / "sources" / "papers" / "protected.pdf"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_bytes(b"%PDF-1.4 fake-protected")
+
+    # 1) delete_file rifiuta le sorgenti non generate (immunità)
+    r = client.delete("/api/v1/files/sources/papers/protected.pdf")
+    assert r.status_code == 400
+    assert src.is_file()
+
+    # 2) cleanup rimuove script + figure + sintesi correlate, tocca le sorgenti
+    r = client.post("/api/v1/sandbox/cleanup", json={"include_synthesis": True})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] >= 3
+    assert not (scripts / "task_test.py").exists()
+    assert not (images / "plot_1.png").exists()
+    assert not (synth / "analisi-test.md").exists()
+    assert src.is_file()
+
+    # 3) delete_file funziona su una nota wiki
+    note = vault_root / "wiki" / "entities" / "tmp.md"
+    note.write_text("---\ntitle: T\ntype: entity\n---\n# T\n", encoding="utf-8")
+    r = client.delete("/api/v1/files/wiki/entities/tmp.md")
+    assert r.status_code == 200 and r.json()["deleted"] is True
+    assert not note.exists()
+
+    # 4) il grafo non contiene più i nodi eliminati
+    g = client.get("/api/v1/graph/nodes").json()
+    ids = {n["id"] for n in g["nodes"]}
+    assert not any("task_test" in i for i in ids)
+
+
 def test_ingest_rejects_unknown_extension(client: TestClient, vault_root: Path) -> None:
     _open(client, vault_root)
     r = client.post("/api/v1/ingest/file",
