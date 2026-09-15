@@ -1,6 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useStore } from '../store';
+import { ANALYSIS_TEMPLATES } from '../sandboxTemplates';
+import type { TreeEntry } from '../types';
+
+/** Raccolta i dataset disponibili (files in sources/datasets/) dall'albero del vault.
+ *  I valori restituiti sono relativi a sources/ (es. 'datasets/sales.csv'). */
+function collectDatasets(node: TreeEntry | null, out: string[] = []): string[] {
+  if (!node) return out;
+  if (node.type === 'file' && node.path.startsWith('sources/datasets/')) {
+    out.push(node.path.replace('sources/', ''));
+  } else {
+    for (const c of node.children || []) collectDatasets(c, out);
+  }
+  return out;
+}
 
 function CleanupButton() {
   const [busy, setBusy] = useState(false);
@@ -32,18 +46,6 @@ function CleanupButton() {
   );
 }
 
-const SAMPLE_CODE = `# Correlazione + scatter (matplotlib)
-import polars as pl
-corr = df.select(pl.corr('revenue', 'units')).item()
-print('correlazione', round(corr, 4))
-
-import matplotlib.pyplot as plt
-fig, ax = plt.subplots()
-ax.scatter(df['units'].to_list(), df['revenue'].to_list(), alpha=0.7)
-ax.set_title('revenue vs units')
-plt.show()
-`;
-
 export function ConsolePane() {
   const code = useStore((s) => s.consoleCode);
   const dataset = useStore((s) => s.consoleDataset);
@@ -51,8 +53,31 @@ export function ConsolePane() {
   const running = useStore((s) => s.consoleRunning);
   const entries = useStore((s) => s.consoleEntries);
   const figures = useStore((s) => s.consoleFigures);
+  const tree = useStore((s) => s.tree);
+  const [templateId, setTemplateId] = useState<string>('');
   const logRef = useRef<HTMLDivElement>(null);
   const set = useStore((s) => s.set);
+
+  // dataset reali presenti nel vault (aggiornati a ogni refresh dell'albero)
+  const datasets = useMemo(() => collectDatasets(tree).sort(), [tree]);
+  const datasetOptions = dataset && !datasets.includes(dataset) ? [dataset, ...datasets] : datasets;
+  const activeTemplate = ANALYSIS_TEMPLATES.find((t) => t.id === templateId);
+
+  const applyTemplate = (id: string) => {
+    setTemplateId(id);
+    const t = ANALYSIS_TEMPLATES.find((x) => x.id === id);
+    if (!t) return;
+    set({ consoleCode: t.code });
+    if (t.needsDataset && !dataset && datasets.length > 0) {
+      set({ consoleDataset: datasets[0] });
+      useStore
+        .getState()
+        .pushConsole({ kind: 'info', text: `dataset impostato automaticamente: ${datasets[0]}` });
+    }
+    useStore
+      .getState()
+      .pushConsole({ kind: 'info', text: `template "${t.label}" caricato — premi ▶ Esegui` });
+  };
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
@@ -114,17 +139,38 @@ export function ConsolePane() {
           spellCheck={false}
         />
         <div className="flex items-center gap-2">
-          <input
+          <select
+            value={templateId}
+            onChange={(e) => applyTemplate(e.target.value)}
+            className="flex-1 bg-ink-850 border border-ink-600 rounded px-2 py-1.5 text-[11px] text-slate-200 outline-none focus:border-sky-500"
+            title="Carica un template di analisi nell'editor (il codice è poi modificabile)"
+          >
+            <option value="">📋 Template di analisi…</option>
+            {ANALYSIS_TEMPLATES.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        {activeTemplate && (
+          <div className="text-[10px] text-slate-500 leading-4 -mt-1">{activeTemplate.description}</div>
+        )}
+        <div className="flex items-center gap-2">
+          <select
             value={dataset}
             onChange={(e) => set({ consoleDataset: e.target.value })}
-            list="dataset-options"
-            placeholder="dataset: es. datasets/sales.csv (opzionale)"
-            className="flex-1 bg-ink-850 border border-ink-600 rounded px-2 py-1.5 text-[11px] text-slate-300 outline-none font-mono"
-          />
-          <datalist id="dataset-options">
-            <option value="datasets/sales.csv" />
-          </datalist>
-          <label className="flex items-center gap-1.5 text-[10.5px] text-slate-400 cursor-pointer">
+            className="flex-1 min-w-0 bg-ink-850 border border-ink-600 rounded px-2 py-1.5 text-[11px] text-slate-300 outline-none font-mono focus:border-sky-500"
+            title="Dataset in sources/datasets/ caricato come df (polars)"
+          >
+            <option value="">— dataset da caricare come df —</option>
+            {datasetOptions.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+          <label className="flex items-center gap-1.5 text-[10.5px] text-slate-400 cursor-pointer shrink-0">
             <input
               type="checkbox"
               className="accent-sky-500"
@@ -136,24 +182,15 @@ export function ConsolePane() {
           <button
             onClick={run}
             disabled={running || !code.trim()}
-            className="px-4 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-[12px] font-semibold"
+            className="px-4 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-[12px] font-semibold shrink-0"
           >
             {running ? '⏳' : '▶ Esegui'}
           </button>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => {
-              set({ consoleCode: SAMPLE_CODE, consoleDataset: 'datasets/sales.csv' });
-              useStore.getState().pushConsole({
-                kind: 'info',
-                text: 'esempio inserito (dataset: datasets/sales.csv) — il campo dataset è stato completato',
-              });
-            }}
-            className="text-[10px] text-sky-400 hover:text-sky-300"
-          >
-            usa esempio correlazione+grafico
-          </button>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[10px] text-slate-600">
+            Il codice è sempre modificabile nell'editor qui sopra.
+          </span>
           <CleanupButton />
         </div>
       </div>

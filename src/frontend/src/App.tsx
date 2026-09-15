@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api/client';
 import { ConsolePane } from './components/ConsolePane';
 import { EditorPane } from './components/EditorPane';
@@ -11,6 +11,54 @@ import { useStore } from './store';
 
 const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
 
+/** Larghezza di un pannello laterale trascinabile (persistita in localStorage). */
+function useResizableWidth(key: string, initial: number, min: number, max: number, flip = false) {
+  const [w, setW] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem(key));
+      return Number.isFinite(v) && v >= min && v <= max ? v : initial;
+    } catch {
+      return initial;
+    }
+  });
+  const dragging = useRef(false);
+  const startX = useRef(0);
+  const startW = useRef(0);
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    startX.current = e.clientX;
+    startW.current = w;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const move = (ev: MouseEvent) => {
+      if (!dragging.current) return;
+      const delta = flip ? startX.current - ev.clientX : ev.clientX - startX.current;
+      setW(Math.min(max, Math.max(min, startW.current + delta)));
+    };
+    const up = () => {
+      dragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  };
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, String(w));
+    } catch {
+      /* storage non disponibile */
+    }
+  }, [w, key]);
+
+  return { w, onMouseDown };
+}
+
 export default function App() {
   const online = useStore((s) => s.online);
   const health = useStore((s) => s.health);
@@ -18,6 +66,8 @@ export default function App() {
   const filePreview = useStore((s) => s.filePreview);
   const set = useStore((s) => s.set);
   const [rightTab, setRightTab] = useState<'console' | 'lint' | 'query'>('console');
+  const left = useResizableWidth('llw-left-width', 300, 230, 560);
+  const right = useResizableWidth('llw-right-width', 400, 300, 800, true);
 
   const refreshData = useCallback(async () => {
     try {
@@ -144,8 +194,13 @@ export default function App() {
       />
 
       <div className="flex-1 min-h-0 flex">
-        {/* colonna sinistra: file + grafo */}
-        <Sidebar onNavigate={(p, t) => void navigate(p, t)} onRefresh={refreshData} />
+        {/* colonna sinistra: file + grafo (larghezza trascinabile) */}
+        <Sidebar width={left.w} onNavigate={(p, t) => void navigate(p, t)} onRefresh={refreshData} />
+        <div
+          onMouseDown={left.onMouseDown}
+          title="Trascina per ridimensionare"
+          className="w-1 shrink-0 cursor-col-resize bg-ink-900 hover:bg-sky-600/50 active:bg-sky-500/70 transition-colors"
+        />
 
         {/* colonna centrale: editor + anteprima file */}
         <main className="flex-1 min-w-0 bg-ink-850">
@@ -161,8 +216,14 @@ export default function App() {
           )}
         </main>
 
-        {/* colonna destra: console / lint / query */}
-        <aside className="w-[400px] shrink-0 flex flex-col border-l border-ink-700 bg-ink-900">
+        <div
+          onMouseDown={right.onMouseDown}
+          title="Trascina per ridimensionare"
+          className="w-1 shrink-0 cursor-col-resize bg-ink-900 hover:bg-sky-600/50 active:bg-sky-500/70 transition-colors"
+        />
+
+        {/* colonna destra: console / lint / query (larghezza trascinabile) */}
+        <aside style={{ width: right.w }} className="shrink-0 flex flex-col border-l border-ink-700 bg-ink-900">
           <div className="flex items-center gap-1 p-2 border-b border-ink-700">
             {(
               [

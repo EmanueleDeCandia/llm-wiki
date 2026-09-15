@@ -6,9 +6,11 @@ import { api } from '../api/client';
 import type { GraphNode } from '../types';
 
 export function Sidebar({
+  width,
   onNavigate,
   onRefresh,
 }: {
+  width: number;
   onNavigate: (path: string, title: string) => void;
   onRefresh: () => Promise<void>;
 }) {
@@ -57,7 +59,7 @@ export function Sidebar({
   };
 
   return (
-    <aside className="w-72 shrink-0 flex flex-col border-r border-ink-700 bg-ink-900">
+    <aside style={{ width }} className="shrink-0 flex flex-col border-r border-ink-700 bg-ink-900">
       <div className="flex items-center gap-1 p-2 border-b border-ink-700">
         <button
           onClick={() => setTab('files')}
