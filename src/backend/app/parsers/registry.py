@@ -63,13 +63,13 @@ class ParserRegistry:
     def branch(self, suffix: str) -> str | None:
         return branch_for_extension(suffix)
 
-    def parse_document(self, path: Path, vault_rel: str):
+    def parse_document(self, path: Path, vault_rel: str, image_map: dict[str, str] | None = None):
         s = path.suffix.lower()
         if s == ".pdf":
             return self.pdf.parse(path, vault_rel)
         if s in (".docx", ".doc"):
             return self.docx.parse(path, vault_rel)
-        return self.text.parse(path, vault_rel)
+        return self.text.parse(path, vault_rel, image_map=image_map)
 
     def parse_image(self, path: Path, vault_rel: str):
         return self.image.parse(path, vault_rel)

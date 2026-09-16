@@ -234,6 +234,29 @@ wiki/concepts/nuova_nota.md ◄── Agente Compilatore (LLM) ──► _index/
 3. L'agente confronta l'estratto con `_index/INDEX.md`, crea le pagine atomiche in `wiki/concepts/` e vi inserisce i collegamenti `[[...]]`.
 4. Il master index e la mappa `_index/graph.json` vengono rigenerati.
 
+#### Ingestione di documenti da engine OCR esterni (dots.mocr, DeepSeek-OCR-2, …)
+
+I documenti che richiedono OCR (scansioni, fax, tabelle dense, grafici) possono
+essere convertiti **al di fuori** dell'app con un VLM (dots.mocr,
+DeepSeek-OCR-2, LlamaParse cloud, …) e importati qui come risultato:
+
+1. **Pulsante «📁 Ingerisci cartella OCR»**: seleziona la cartella di output
+   (es. `report.md` + `imgs/`). I file vengono salvati sotto `sources/`
+   preservando la struttura; i riferimenti a immagini relative dei `.md`
+   vengono riscritti verso `sources/images/`.
+2. Le **tabelle Markdown** dei `.md` sono estratte come tabelle strutturate
+   (stesso contratto dei PDF) e — come per ogni documento — esportate in
+   `sources/datasets/` come `.tsv`, quindi **analizzabili nello Sandbox**
+   con i template predefiniti.
+3. Un **frontmatter YAML** opzionale nel `.md` documenta la provenienza
+   (`source: contratto.pdf`, `engine: dots.mocr`, …) ed è preservato nei
+   metadati del documento.
+4. **Opzionale — engine nativo (`LLW_PDF_ENGINE`)**: un servizio OCR HTTP
+   locale (VLM su GPU, `tools/ocr_http_server.py` di riferimento) può
+   essere puntato via `LLW_OCR_HTTP_URL`. Con `auto`, i PDF con layer
+   testuale rado (scansioni) vengono instradati al VLM, mentre i PDF
+   born-digital restano sul motore built-in (veloce, zero AI).
+
 ### Pipeline B: Calcolo e Data Science Sandboxed
 1. Rilascia un dataset in `sources/datasets/vendite.csv`.
 2. L'agente profila le colonne via `polars` e scrive la scheda metadati in `wiki/entities/vendite.md`.

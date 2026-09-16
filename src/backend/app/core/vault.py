@@ -191,3 +191,26 @@ class Vault:
             i += 1
         candidate.write_bytes(data)
         return candidate
+
+    def store_source_rel(self, rel_path: str, data: bytes, branch: str) -> Path:
+        """Salva preservando i sottopercorsi (import cartelle OCR).
+
+        `rel_path` è il path relativo nella cartella originale (es.
+        `report/imgs/tab1.png`); i segmenti `..` e assoluti sono scartati.
+        Come `store_source`: mai sovrascrittura, riuso se byte identici.
+        """
+        parts = [p for p in rel_path.replace("\\", "/").split("/") if p not in ("", ".", "..")]
+        if not parts:
+            raise ValueError("path vuoto o non valido")
+        target_dir = self.root / "sources" / branch
+        candidate = target_dir / Path(*parts)
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        if candidate.is_file() and candidate.read_bytes() == data:
+            return candidate
+        stem, suffix = Path(parts[-1]).stem, Path(parts[-1]).suffix
+        i = 2
+        while candidate.exists():
+            candidate = target_dir / Path(*parts[:-1]) / f"{stem}_{i}{suffix}"
+            i += 1
+        candidate.write_bytes(data)
+        return candidate

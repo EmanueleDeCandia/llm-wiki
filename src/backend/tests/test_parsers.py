@@ -246,3 +246,65 @@ def test_dataset_profile_sqlite(sample_sqlite: Path) -> None:
     assert prof.error is None
     assert prof.rows == 24
     assert "age" in prof.dtypes and "score" in prof.dtypes
+
+
+def test_text_md_tables_structured(tmp_path: Path) -> None:
+    """Le tabelle Markdown dei documenti (es. output OCR) diventano ParsedTable."""
+    p = tmp_path / "report.md"
+    p.write_text(
+        "# Report trimestrale\n\nDati non certificati.\n\n"
+        "| Mese | Unità | Ricavi |\n| --- | --- | --- |\n"
+        "| Gen | 120 | 1450,50 |\n| Feb | 95 | 1180,25 |\n",
+        encoding="utf-8",
+    )
+    reg = ParserRegistry()
+    parsed = reg.parse_document(p, "sources/papers/report.md")
+    assert len(parsed.tables) == 1
+    assert parsed.tables[0].header == ["Mese", "Unità", "Ricavi"]
+    assert parsed.tables[0].rows[0] == ["Gen", "120", "1450,50"]
+
+
+def test_text_md_frontmatter_provenance(tmp_path: Path) -> None:
+    """Il frontmatter YAML (provenienza OCR) è rimosso dal corpo e diventa metadata."""
+    p = tmp_path / "contratto.md"
+    p.write_text(
+        "---\nsource: contratto.pdf\nengine: dots.mocr\ntitle: Contratto di appalto 42/2026\n---\n"
+        "# Contratto di appalto 42/2026\n\nArt. 1: oggetto dell'appalto.\n",
+        encoding="utf-8",
+    )
+    reg = ParserRegistry()
+    parsed = reg.parse_document(p, "sources/papers/contratto.md")
+    assert parsed.metadata["source"] == "contratto.pdf"
+    assert parsed.metadata["engine"] == "dots.mocr"
+    assert parsed.title == "Contratto di appalto 42/2026"
+    assert not parsed.markdown.startswith("---")
+    assert "Art. 1" in parsed.markdown
+
+
+def test_text_md_no_frontmatter_untouched(tmp_path: Path) -> None:
+    """Un '---' a inizio file senza chiusura non è frontmatter: corpo intatto."""
+    p = tmp_path / "note.txt"
+    p.write_text("---\ntesto senza chiusura di frontmatter\n", encoding="utf-8")
+    parsed = ParserRegistry().parse_document(p, "sources/papers/note.txt")
+    assert parsed.metadata == {}
+    assert "---" in parsed.markdown
+
+
+def test_text_md_image_refs_rewritten(tmp_path: Path) -> None:
+    """I riferimenti a immagini relative vengono riscritti via image_map."""
+    p = tmp_path / "doc.md"
+    p.write_text("# Doc\n\nVedi la tabella: ![tabella](imgs/t1.png) e ![fig](imgs/t2.png).\n",
+                 encoding="utf-8")
+    parsed = ParserRegistry().parse_document(
+        p,
+        "sources/papers/doc.md",
+        image_map={"imgs/t1.png": "sources/images/batch/imgs/t1.png"},
+    )
+    assert "![tabella](sources/images/batch/imgs/t1.png)" in parsed.markdown
+    assert "![fig](imgs/t2.png)" in parsed.markdown  # non mappato: invariato
+
+
+def test_docx_tables_structured(tmp_path: Path) -> None:
+    build_simple_docx(tmp_path / "d.docx")
+    parsed = ParserRegistry().parse_document(tmp_path / "d.docx", "sources/papers/d.docx")
+    assert parsed.parser_name == "docx"

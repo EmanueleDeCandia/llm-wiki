@@ -3,8 +3,11 @@
 Motore selezionabile via env `LLW_PDF_ENGINE`:
 * `auto` (default): prova `docling` (alta fedeltà: tabelle strutturate,
   gerarchia H1-H6, formule LaTeX); se non è installato o non è raggiungibile
-  (modelli su Hugging Face), prova `llamaparse` cloud (se
-  `LLAMAPARSE_API_KEY` è configurata), infine degrada al motore built-in.
+  (modelli su Hugging Face), valuta l'engine **OCR HTTP** locale (se
+  `LLW_OCR_HTTP_URL` è configurata): il PDF passa al VLM solo quando il
+  layer testuale è rado (scansione/fax), altrimenti resta il built-in;
+  poi prova `llamaparse` cloud (se `LLAMAPARSE_API_KEY` è configurata),
+  infine degrada al motore built-in.
 * `pypdf`: motore built-in leggero — testo via layer testuale +
   **rilevatore di tabelle**: PyMuPDF `find_tables` (PDF con linee di
   separazione, incluso booktabs) + euristica su coordinate per tabelle
@@ -12,6 +15,9 @@ Motore selezionabile via env `LLW_PDF_ENGINE`:
 * `docling` / `marker`: vincolati (fallback built-in solo su errore).
 * `llamaparse`: API cloud LlamaIndex — Markdown con tabelle e formule;
   richiede `LLAMAPARSE_API_KEY`; il PDF lascia la macchina.
+* `dotsmocr-http` / `deepseek2-http` / `ocr-http`: VLM OCR locali eseguiti
+  da un servizio HTTP separato (dots.mocr, DeepSeek-OCR-2, …) —
+  richiede `LLW_OCR_HTTP_URL`; il PDF resta in rete propria.
 
 Le formule matematiche passano sempre intatte: il built-in preserva il
 layer testuale (con `$...$` quando presente), docling con
@@ -28,19 +34,36 @@ from pathlib import Path
 
 from ..schemas.wiki import ParsedDocument, ParsedTable
 from .llama_parse import LlamaParseClient, LlamaParseError
+from .ocr_http import OCR_ENGINE_ALIASES, OcrHttpClient, OcrHttpError
 from .tables import Span, extract_tables_from_spans, parse_markdown_table, table_to_markdown
 
 log = logging.getLogger("llmwiki.parsers.pdf")
 
 _LLAMA_ALIASES = {"llamaparse", "llama", "llama-parse"}
+_OCR_ENGINES = {v for v in OCR_ENGINE_ALIASES.values()}
+
+
+def _scan_threshold() -> float:
+    """Sotto questa densità (caratteri/pagina) il PDF è considerato scansione."""
+    try:
+        return float(os.environ.get("LLW_PDF_SCAN_THRESHOLD", "20"))
+    except ValueError:
+        return 20.0
 
 
 class PdfParser:
     name = "pdf"
 
     def __init__(self, engine: str | None = None) -> None:
-        self.engine = (engine or os.environ.get("LLW_PDF_ENGINE", "auto")).lower()
+        raw = (engine or os.environ.get("LLW_PDF_ENGINE", "auto")).lower()
+        self.engine = OCR_ENGINE_ALIASES.get(raw, raw)
         self._docling_unavailable: bool | None = None  # cache negativa
+
+    def _ocr_client(self, kind: str | None = None) -> OcrHttpClient:
+        # "dotsmocr-http" → kind "dotsmocr" (il suffisso -http è del parser_name)
+        if kind and kind.endswith("-http"):
+            kind = kind[: -len("-http")]
+        return OcrHttpClient(kind=kind)
 
     def parse(self, path: Path, vault_rel: str) -> ParsedDocument:
         data = path.read_bytes()
@@ -56,16 +79,44 @@ class PdfParser:
                     "engine 'llamaparse' selezionato ma LLAMAPARSE_API_KEY non configurata"
                 )
             return client.parse_pdf(data, path.name, vault_rel)
+        if self.engine in _OCR_ENGINES:
+            client = self._ocr_client(self.engine)
+            if not client.is_configured():
+                raise OcrHttpError(
+                    f"engine '{self.engine}' selezionato ma LLW_OCR_HTTP_URL non configurata"
+                )
+            return client.parse_pdf(data, path.name, vault_rel)
         if self.engine == "auto":
             if not self._docling_unavailable:
                 try:
                     return self._parse_high_fidelity(data, vault_rel, path)
                 except ImportError:
                     self._docling_unavailable = True
-                    log.info("docling non installato: valuto engine cloud/built-in")
+                    log.info("docling non installato: valuto engine OCR/cloud/built-in")
                 except Exception as exc:  # noqa: BLE001
                     self._docling_unavailable = True
-                    log.warning("docling non raggiungibile (%s): valuto engine cloud/built-in", exc)
+                    log.warning("docling non raggiungibile (%s): valuto engine OCR/cloud/built-in", exc)
+            # OCR VLM locale (dots.mocr / DeepSeek-OCR-2 / generico HTTP):
+            # usato solo quando il layer testuale è rado (scansione/fax).
+            ocr = self._ocr_client(None)
+            if ocr.is_configured():
+                cheap = self._parse_pypdf(data, vault_rel, path)
+                density = self._text_density(data, cheap)
+                if density >= _scan_threshold():
+                    log.info(
+                        "layer testuale denso (%.0f car./pag): kept built-in", density
+                    )
+                    return cheap
+                log.info(
+                    "layer testuale rado (%.0f car./pag < %.0f): escalo all'engine OCR HTTP",
+                    density,
+                    _scan_threshold(),
+                )
+                try:
+                    return ocr.parse_pdf(data, path.name, vault_rel)
+                except OcrHttpError as exc:
+                    log.warning("OCR HTTP non riuscito (%s): fallback built-in", exc)
+                    return cheap
             client = LlamaParseClient()
             if client.is_configured():
                 try:
@@ -74,6 +125,17 @@ class PdfParser:
                 except LlamaParseError as exc:
                     log.warning("LlamaParse non riuscito (%s): uso motore built-in", exc)
         return self._parse_pypdf(data, vault_rel, path)
+
+    @staticmethod
+    def _text_density(data: bytes, doc: ParsedDocument) -> float:
+        """Caratteri di testo estratti per pagina (stima per instradamento)."""
+        try:
+            import pypdf
+
+            pages = len(pypdf.PdfReader(io.BytesIO(data)).pages) or 1
+        except Exception:  # noqa: BLE001
+            pages = 1
+        return len(doc.markdown) / pages
 
     # ------------------------------------------------------- built-in (pypdf + pymupdf)
     def _parse_pypdf(self, data: bytes, vault_rel: str, path: Path) -> ParsedDocument:

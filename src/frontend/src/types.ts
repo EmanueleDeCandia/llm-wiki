@@ -112,3 +112,19 @@ export interface IngestResult {
   sources_altered: string[];
   messages: string[];
 }
+
+export interface FolderIngestFile {
+  name: string;
+  status: 'ok' | 'skipped' | 'error';
+  source_path?: string;
+  notes: number;
+  parser?: string;
+  error?: string;
+}
+
+export interface FolderIngestResult {
+  files: FolderIngestFile[];
+  ingested: number;
+  skipped: number;
+  errors: number;
+}

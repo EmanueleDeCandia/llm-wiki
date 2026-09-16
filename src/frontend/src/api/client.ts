@@ -1,4 +1,5 @@
 import type {
+  FolderIngestResult,
   GraphData,
   Health,
   IngestResult,
@@ -71,6 +72,31 @@ export const api = {
             throw new Error(`API ${res.status}: ${detail}`);
           }
           resolve((await res.json()) as IngestResult);
+        })
+        .catch(reject);
+    }),
+  // Import di una cartella (output di un engine OCR: .md + immagini).
+  // Ogni file è inviato con il suo percorso relativo originale.
+  ingestFolder: (files: File[]) =>
+    new Promise<FolderIngestResult>((resolve, reject) => {
+      const fd = new FormData();
+      for (const f of files) {
+        const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+        fd.append('files', f, rel);
+      }
+      fetch(`${BASE}/ingest/folder`, { method: 'POST', body: fd })
+        .then(async (res) => {
+          if (!res.ok) {
+            let detail = res.statusText;
+            try {
+              const b = await res.json();
+              detail = typeof b.detail === 'string' ? b.detail : JSON.stringify(b.detail ?? b);
+            } catch {
+              /* ignore */
+            }
+            throw new Error(`API ${res.status}: ${detail}`);
+          }
+          resolve((await res.json()) as FolderIngestResult);
         })
         .catch(reject);
     }),

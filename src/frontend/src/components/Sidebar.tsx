@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { FileTree } from './FileTree';
 import { GraphView, TYPE_LABELS } from './GraphView';
@@ -19,7 +19,14 @@ export function Sidebar({
   const notes = useStore((s) => s.notes);
   const [tab, setTab] = useState<'files' | 'graph'>('files');
   const fileInput = useRef<HTMLInputElement>(null);
+  const dirInput = useRef<HTMLInputElement>(null);
   const [ingesting, setIngesting] = useState(false);
+
+  // `webkitdirectory` non è un attributo JSX standard: lo impostiamo a runtime
+  useEffect(() => {
+    dirInput.current?.setAttribute('webkitdirectory', '');
+    dirInput.current?.setAttribute('directory', ''); // Firefox
+  }, []);
 
   const handleIngest = async (file: File) => {
     setIngesting(true);
@@ -34,6 +41,30 @@ export function Sidebar({
     } finally {
       setIngesting(false);
       if (fileInput.current) fileInput.current.value = '';
+    }
+  };
+
+  const handleIngestFolder = async (list: FileList | null) => {
+    const files = Array.from(list || []);
+    if (!files.length) return;
+    setIngesting(true);
+    try {
+      const res = await api.ingestFolder(files);
+      const problems = res.files
+        .filter((f) => f.status !== 'ok')
+        .map((f) => `${f.name}${f.error ? ` (${f.error})` : ''}`)
+        .slice(0, 3)
+        .join('; ');
+      const summary = `Cartella OCR: ${res.ingested} file ingeriti` +
+        (res.skipped + res.errors > 0 ? ` · ${res.skipped} saltati, ${res.errors} errori` : '') +
+        (problems ? ` — ${problems}` : '');
+      useStore.getState().set({ statusMessage: summary });
+      await onRefresh();
+    } catch (e) {
+      useStore.getState().set({ statusMessage: `Ingestione cartella fallita: ${String(e)}` });
+    } finally {
+      setIngesting(false);
+      if (dirInput.current) dirInput.current.value = '';
     }
   };
 
@@ -91,12 +122,27 @@ export function Sidebar({
                 for (const f of Array.from(e.target.files || [])) handleIngest(f);
               }}
             />
+            <input
+              ref={dirInput}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => handleIngestFolder(e.target.files)}
+            />
             <button
               onClick={() => fileInput.current?.click()}
               disabled={ingesting}
               className="w-full text-[12px] py-2 rounded-lg bg-sky-600/90 hover:bg-sky-500 disabled:opacity-50 text-white font-semibold"
             >
               {ingesting ? 'Ingestione in corso…' : '⬆ Ingerisci file (PDF · img · CSV…)'}
+            </button>
+            <button
+              onClick={() => dirInput.current?.click()}
+              disabled={ingesting}
+              className="mt-1.5 w-full text-[12px] py-1.5 rounded-lg bg-ink-700 hover:bg-ink-600 disabled:opacity-50 text-slate-200 font-medium"
+              title="Importa una cartella di output OCR (es. dots.mocr / DeepSeek-OCR-2): .md + immagini"
+            >
+              📁 Ingerisci cartella OCR (md + img)
             </button>
             <div className="text-[10px] text-slate-500 mt-1 px-1">
               → sources/ è immutabile: le note compilate finiscono in wiki/

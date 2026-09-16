@@ -63,6 +63,22 @@ class IngestResponse(BaseModel):
     messages: list[str]
 
 
+class FolderFileResult(BaseModel):
+    name: str
+    status: str  # ok | skipped | error
+    source_path: str | None = None
+    notes: int = 0
+    parser: str = ""
+    error: str | None = None
+
+
+class FolderIngestResponse(BaseModel):
+    files: list[FolderFileResult]
+    ingested: int
+    skipped: int
+    errors: int
+
+
 class SandboxRunRequest(BaseModel):
     code: str = Field(description="Codice Python autonomo")
     task_name: str | None = None
@@ -206,6 +222,95 @@ async def ingest_file_endpoint(file: UploadFile = File(...),
     stored = vault.store_source(file.filename or "file", data, target)
     res = ingest_file(vault, stored, target)
     return IngestResponse(**res.__dict__)
+
+
+@router.post("/ingest/folder", response_model=FolderIngestResponse)
+async def ingest_folder_endpoint(files: list[UploadFile] = File(...)) -> FolderIngestResponse:
+    """Importa una cartella (output di engine OCR: .md + immagini).
+
+    Ogni file viene inviato come parte multipart con `filename` = path
+    relativo nella cartella originale. I file vengono salvati sotto
+    `sources/<branch>/` preservando i sottopercorsi, e i riferimenti a
+    immagini relative dei documenti Markdown sono riscritti verso i
+    percorsi dentro il vault.
+    """
+    from ..parsers.registry import ParserRegistry
+
+    vault = _vault()
+    registry = ParserRegistry()
+    results: list[FolderFileResult] = []
+
+    # Fase 1: salva tutti i file (mai sovrascrittura), raccogliendo i percorsi
+    stored: list[tuple[str, Path, str]] = []  # (path originale, path salvato, branch)
+    for f in files:
+        rel_name = (f.filename or "").replace("\\", "/").strip("/")
+        if not rel_name:
+            continue
+        suffix = Path(rel_name).suffix.lower()
+        branch = registry.branch(suffix)
+        if not branch:
+            results.append(FolderFileResult(name=rel_name, status="skipped",
+                                            error=f"estensione non supportata {suffix}"))
+            continue
+        data = await f.read()
+        if not data:
+            results.append(FolderFileResult(name=rel_name, status="skipped", error="file vuoto"))
+            continue
+        try:
+            path = vault.store_source_rel(rel_name, data, branch)
+        except ValueError as exc:
+            results.append(FolderFileResult(name=rel_name, status="skipped", error=str(exc)))
+            continue
+        stored.append((rel_name, path, branch))
+
+    # Fase 2: mappe per i riferimenti a immagini dei documenti Markdown
+    def image_map_for(md_rel_name: str) -> dict[str, str]:
+        m: dict[str, str] = {}
+        img_root = vault.root / "sources" / "images"
+        if img_root.is_dir():  # immagini già presenti nel vault (ingest separate)
+            for p in img_root.rglob("*"):
+                if p.is_file():
+                    m[p.name] = vault.rel(p)
+        md_dir = Path(md_rel_name).parent
+        for up, p, br in stored:  # immagini di questo batch (priorità massima)
+            if br != "images":
+                continue
+            vr = vault.rel(p)
+            m[up] = vr
+            if str(md_dir) not in (".", "") and up.startswith(f"{md_dir}/"):
+                m[up[len(str(md_dir)) + 1 :]] = vr
+            m[Path(up).name] = vr
+        return m
+
+    # Fase 3: ingestione per file (i .md con la loro image_map)
+    for rel_name, path, branch in stored:
+        if not any(r.name == rel_name for r in results):
+            im = (
+                image_map_for(rel_name)
+                if branch == "papers" and path.suffix.lower() in (".md", ".markdown", ".txt")
+                else None
+            )
+            try:
+                res = ingest_file(vault, path, branch, image_map=im)
+                results.append(FolderFileResult(
+                    name=rel_name, status="ok", source_path=res.source_path,
+                    notes=len(res.notes_created), parser=res.parser,
+                ))
+            except Exception as exc:  # noqa: BLE001
+                results.append(FolderFileResult(name=rel_name, status="error", error=str(exc)))
+
+    ingested = sum(1 for r in results if r.status == "ok")
+    skipped = sum(1 for r in results if r.status == "skipped")
+    errors = sum(1 for r in results if r.status == "error")
+    if not results and stored:
+        pass
+    if not ingested:
+        raise HTTPException(
+            status_code=415,
+            detail="Nessun file della cartella è stato ingerito. "
+                   f"Dettagli: {[(r.name, r.error) for r in results if r.status != 'ok'][:10]}",
+        )
+    return FolderIngestResponse(files=results, ingested=ingested, skipped=skipped, errors=errors)
 
 
 @router.get("/graph/nodes")

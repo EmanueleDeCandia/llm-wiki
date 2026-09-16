@@ -138,6 +138,9 @@ class ParsedDocument(BaseModel):
     tables: list[ParsedTable] = Field(default_factory=list)
     word_count: int = 0
     parser_name: str = "unknown"
+    # Metadati di provenienza (es. frontmatter YAML dei documenti Markdown
+    # prodotti da engine OCR esterni: source, engine, date, …)
+    metadata: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("markdown", mode="before")
     @classmethod

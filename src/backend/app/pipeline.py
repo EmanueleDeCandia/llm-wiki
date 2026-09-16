@@ -8,6 +8,7 @@ Pipeline A — IngestAndCompile:
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from .core.vault import Vault
 from .index.index_builder import build_registry, write_indexes
 from .llm.factory import get_llm_client
 from .parsers.registry import ParserRegistry
+from .schemas.wiki import ParsedDocument
 
 log = logging.getLogger("llmwiki.pipeline")
 
@@ -45,7 +47,13 @@ def _existing_names(reg: LinkRegistry, exclude: set[str]) -> dict[str, list[str]
     return out
 
 
-def ingest_file(vault: Vault, file_path: Path, branch: str) -> IngestResult:
+def ingest_file(
+    vault: Vault,
+    file_path: Path,
+    branch: str,
+    image_map: dict[str, str] | None = None,
+    export_tables: bool | None = None,
+) -> IngestResult:
     vault.snapshot_sources()
     registry = ParserRegistry()
     source_rel = vault.rel(file_path)
@@ -65,9 +73,10 @@ def ingest_file(vault: Vault, file_path: Path, branch: str) -> IngestResult:
     llm = ctx.llm
     compiler = LLMCompiler(llm) if not isinstance(llm, OfflineLLMClient) else DeterministicCompiler()
 
-    suffix = file_path.suffix.lower()
+    parsed_doc: ParsedDocument | None = None
     if branch == "papers":
-        parsed = registry.parse_document(file_path, source_rel)
+        parsed_doc = registry.parse_document(file_path, source_rel, image_map=image_map)
+        parsed = parsed_doc
         result.parser = parsed.parser_name
         comp: CompilationResult = compiler.compile_document(parsed, ctx)
     elif branch == "images":
@@ -114,4 +123,43 @@ def ingest_file(vault: Vault, file_path: Path, branch: str) -> IngestResult:
     result.sources_integrity_ok = not altered
     if altered:
         result.messages.append(f"INTEGRITÀ: file sorgenti alterati: {altered}")
+
+    # Dati derivati: le tabelle estratte da un documento (PDF, Markdown OCR,
+    # DOCX…) diventano dataset .tsv in sources/datasets/ e vengono ingesti
+    # come dataset veri — così lo Sandbox le analizza con gli stessi
+    # template dei CSV/Parquet. Disattivabile: LLW_EXPORT_TABLE_DATASETS=0.
+    if branch == "papers" and parsed_doc is not None:
+        result.messages.extend(_export_table_datasets(vault, parsed_doc, result, export_tables))
+
     return result
+
+
+def _export_table_datasets(
+    vault: Vault,
+    parsed: ParsedDocument,
+    result: IngestResult,
+    export_tables: bool | None,
+) -> list[str]:
+    """Esporta le tabelle significative come .tsv e le ingeste (idempotente)."""
+    if export_tables is None:
+        export_tables = os.environ.get("LLW_EXPORT_TABLE_DATASETS", "1") != "0"
+    if not export_tables:
+        return []
+    msgs: list[str] = []
+    stem = Path(parsed.source_path).stem
+    for i, t in enumerate(parsed.tables, start=1):
+        if len(t.header) < 2 or len(t.rows) < 2:
+            continue
+        tsv_rel = f"sources/datasets/{stem}_tabella_{i}.tsv"
+        tsv_path = vault.root / tsv_rel
+        lines = ["\t".join(t.header), *("\t".join(r) for r in t.rows)]
+        content = "\n".join(lines) + "\n"
+        if tsv_path.is_file() and tsv_path.read_text(encoding="utf-8") == content:
+            continue  # già presente e identico
+        tsv_path.parent.mkdir(parents=True, exist_ok=True)
+        tsv_path.write_text(content, encoding="utf-8")
+        sub = ingest_file(vault, tsv_path, "datasets", export_tables=False)
+        result.notes_created.extend(sub.notes_created)
+        result.messages.extend(sub.messages)
+        msgs.append(f"Tabella {i} ({len(t.rows)} righe) → dataset {tsv_rel}")
+    return msgs

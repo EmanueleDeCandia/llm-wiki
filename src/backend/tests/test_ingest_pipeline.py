@@ -135,3 +135,52 @@ def test_ingest_image(vault_root: Path, sample_png: Path) -> None:
     note, _ = parse_frontmatter(card)
     assert note.type == "entity"
     assert "320" in card and "200" in card
+
+
+def test_pdf_tables_exported_as_datasets(vault_root: Path) -> None:
+    """Le tabelle estratte da un PDF diventano dataset .tsv in sources/datasets/
+    e vengono ingesti come dataset veri (nota-entità con profilo)."""
+    from .conftest import build_table_pdf
+
+    vault = _open_vault(vault_root)
+    p = vault.root / "sources" / "papers" / "quarterly.pdf"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    build_table_pdf(
+        ["Quarterly report for the fiscal year."],
+        [["Month", "Units", "Revenue"],
+         ["Jan", "120", "1450.50"],
+         ["Feb", "95", "1180.25"]],
+        p,
+    )
+    res = ingest_file(vault, p, "papers")
+    tsvs = list((vault.root / "sources" / "datasets").glob("quarterly_tabella_*.tsv"))
+    assert len(tsvs) == 1, f"tabella non esportata: {res.messages}"
+    content = tsvs[0].read_text(encoding="utf-8")
+    assert content.startswith("Month\tUnits\tRevenue\n")
+    assert "Jan\t120\t1450.50" in content
+    # il dataset è stato ingesto: esiste una nota-entità di tipo dataset
+    dataset_notes = [
+        f for f in (vault.wiki / "entities").glob("*.md")
+        if 'type: dataset' in f.read_text(encoding="utf-8")
+    ]
+    assert dataset_notes, "la tabella exportata deve avere una nota-entità dataset"
+    # idempotenza: re-ingest non duplica né altera
+    res2 = ingest_file(vault, p, "papers")
+    assert res2.sources_integrity_ok
+    assert len(list((vault.root / "sources" / "datasets").glob("quarterly_tabella_*.tsv"))) == 1
+
+
+def test_export_tables_disabled(vault_root: Path, monkeypatch) -> None:
+    from .conftest import build_table_pdf
+
+    monkeypatch.setenv("LLW_EXPORT_TABLE_DATASETS", "0")
+    vault = _open_vault(vault_root)
+    p = vault.root / "sources" / "papers" / "q2.pdf"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    build_table_pdf(
+        ["Report."],
+        [["A", "B"], ["1", "2"], ["3", "4"]],
+        p,
+    )
+    ingest_file(vault, p, "papers")
+    assert not list((vault.root / "sources" / "datasets").glob("q2_tabella_*.tsv"))

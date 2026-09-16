@@ -3,6 +3,18 @@
 Per PDF/EPUB usa `pdf_doc` (pypdf built-in + hook opzionale per docling).
 Le formule matematiche in sintassi `$...$` / `$$...$$` sono conservate
 intatte nel Markdown di output (invariante §1.5: solo LaTeX, mai Unicode).
+
+Documenti Markdown (output di engine OCR esterni: dots.mocr,
+DeepSeek-OCR-2, LlamaParse, …):
+* un eventuale frontmatter YAML iniziale viene *rimosso* dal corpo e
+  preservato come `metadata` strutturata (provenienza: source, engine, …);
+  la chiave `title`, se presente, diventa il titolo del documento;
+* le tabelle Markdown (`| ... |`) sono estratte come `ParsedTable` con lo
+  stesso contratto dei PDF, così compilatore e Sandbox le trattano allo
+  stesso modo;
+* i riferimenti a immagini relative (`![](imgs/x.png)`) possono essere
+  riscritti verso percorsi dentro il vault tramite `image_map` (import
+  cartelle OCR).
 """
 from __future__ import annotations
 
@@ -11,10 +23,14 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import yaml
+
 from ..schemas.wiki import ParsedDocument
+from .tables import extract_markdown_tables
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
-_LATENT = ("$")
+_IMG_REF_RE = re.compile(r"(!\[[^\]]*\])\(([^)]+)\)")
+_LATENT = ("$",)
 
 
 def _extract_headings(markdown: str) -> list[str]:
@@ -26,18 +42,72 @@ class TextDocumentParser:
 
     name = "text"
 
-    def parse(self, path: Path, vault_rel: str) -> ParsedDocument:
+    def parse(self, path: Path, vault_rel: str, image_map: dict[str, str] | None = None) -> ParsedDocument:
         raw = path.read_text(encoding="utf-8", errors="replace")
-        title = self._guess_title(raw, path)
-        markdown = self._ensure_headings(raw)
+        metadata: dict[str, str] = {}
+        title_override: str | None = None
+        body = raw
+        fm = self._split_frontmatter(raw)
+        if fm is not None:
+            data, body = fm
+            for k, v in data.items():
+                if v is None or isinstance(v, (dict, list)):
+                    continue
+                metadata[str(k)] = str(v)
+            if metadata.get("title"):
+                title_override = metadata["title"]
+        title = title_override or self._guess_title(body, path)
+        markdown = self._rewrite_image_refs(self._ensure_headings(body), image_map)
         return ParsedDocument(
             source_path=vault_rel,
             title=title,
             markdown=markdown,
             headings=_extract_headings(markdown),
+            tables=extract_markdown_tables(markdown),
             word_count=len(markdown.split()),
             parser_name=self.name,
+            metadata=metadata,
         )
+
+    @staticmethod
+    def _split_frontmatter(raw: str) -> tuple[dict, str] | None:
+        """Frontmatter YAML iniziale (`--- … ---`): restituisce (dati, corpo).
+
+        Assente (o non-JSON mapping) → None: il corpo resta intatto.
+        """
+        if not raw.startswith("---"):
+            return None
+        end = raw.find("\n---", 3)
+        if end == -1:
+            return None
+        header = raw[3:end].strip()
+        body = raw[end + 4 :].lstrip("\n")
+        try:
+            data = yaml.safe_load(header)
+        except yaml.YAMLError:
+            return None
+        if not isinstance(data, dict) or not data:
+            return None
+        return data, body
+
+    @staticmethod
+    def _rewrite_image_refs(markdown: str, image_map: dict[str, str] | None) -> str:
+        """Riscrive `![alt](ref)` → `![alt](vault_rel)` per i ref in image_map.
+
+        I riferimenti assoluti (http/https/data:) restano immutati.
+        """
+        if not image_map:
+            return markdown
+
+        def _sub(m: re.Match) -> str:
+            bang_alt, target = m.group(1), m.group(2).strip()
+            ref = target.split()[0].strip("<>")  # scarta titolo opzionale "…"
+            if ref.startswith(("http://", "https://", "data:")):
+                return m.group(0)
+            repl = image_map.get(ref)
+            return f"{bang_alt}({repl})" if repl else m.group(0)
+
+        return _IMG_REF_RE.sub(_sub, markdown)
 
     @staticmethod
     def _guess_title(raw: str, path: Path) -> str:
@@ -89,7 +159,7 @@ class DocxDocumentParser:
                     if tr.tag.split("}")[-1] != "tr":
                         continue
                     cells: list[str] = []
-                    for tc in tr.iter():
+                    for tc in child.iter():
                         if tc.tag.split("}")[-1] == "tc":
                             cells.append(
                                 "".join(t.text or "" for t in tc.iter() if t.tag.endswith("}t"))
@@ -112,6 +182,7 @@ class DocxDocumentParser:
             title=title,
             markdown=markdown,
             headings=_extract_headings(markdown),
+            tables=extract_markdown_tables(markdown),
             word_count=len(markdown.split()),
             parser_name=self.name,
         )

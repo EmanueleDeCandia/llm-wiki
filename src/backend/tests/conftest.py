@@ -183,6 +183,29 @@ def build_simple_docx(path: Path) -> None:
         zf.writestr("word/document.xml", xml)
 
 
+def build_scanned_pdf(path: Path, lines: list[str] | None = None) -> None:
+    """PDF con UNA SOLA pagina immagine, zero layer testuale: simula una
+    scansione/fax (il motore built-in non può estrarre nulla)."""
+    from PIL import Image, ImageDraw
+
+    default_lines = [
+        "CONTRATTO DI APPALTO - Rep. 42/2026",
+        "Art. 1 - Oggetto",
+        "Il presente contratto ha ad oggetto la fornitura",
+        "di arredi per gli uffici dell'amministrazione.",
+        "Art. 2 - Importo",
+        "L'importo complessivo e' di Euro 12.800,00.",
+    ]
+    txt = lines or default_lines
+    img = Image.new("RGB", (1240, 1600), "white")
+    d = ImageDraw.Draw(img)
+    y = 80
+    for ln in txt:
+        d.text((80, y), ln, fill="black")
+        y += 44
+    img.save(path, "PDF")
+
+
 @pytest.fixture()
 def sample_csv(tmp_path: Path) -> Path:
     p = tmp_path / "sales.csv"
